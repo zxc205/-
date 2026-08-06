@@ -3,37 +3,37 @@ name: Daily NatPierce Check-in
 
 on:
   workflow_dispatch: # 允许手动触发
-  日程表:
-    - cron: '0 0 * * *' # 每天UTC时间02:10运行 (对应UTC+8的8，确保在可签到时间后)
+  schedule:
+    - cron: '0 0 * * *' # 每天UTC时间02:10运行 (对应UTC+8的10:10，确保在可签到时间后)
 
-职位:
-  办理入住:
-    运行环境: ubuntu-latest # 使用最新的Ubuntu环境
+jobs:
+  check-in:
+    runs-on: ubuntu-latest # 使用最新的Ubuntu环境
 
-    步骤:
-    - 名称: 结账代码
-      使用: actions/checkout@v3 # 检出你的仓库代码
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3 # 检出你的仓库代码
 
-    - 名称: 设置 Node.js
-      使用: actions/setup-node@v3
-      与:
-        节点版本: '18' # 或者你希望的Node.js版本
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18' # 或者你希望的Node.js版本
 
-    - 名称: 安装 Node.js 依赖项
-      运行: npm install puppeteer # 安装puppeteer库
+    - name: Install Node.js dependencies
+      run: npm install puppeteer # 安装puppeteer库
 
-    - 名称: 设置 Python
-      使用: actions/setup-python@v4
-      与:
-        python-version: '3.x' # 使用最新的 Python 3.x 版本
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x' # Use the latest Python 3.x version
 
-    - 名称: 安装 Python 依赖项
-      运行: pip install requests opencv-python numpy Pillow
+    - name: Install Python dependencies
+      run: pip install requests opencv-python numpy Pillow
 
-    - 名称: 运行签到和推送通知脚本
-      id: checkin_and_notify_step # 为清晰起见重命名ID
-      环境:
-        NATPIERCE_USERNAME: ${{ secrets.NATPIERCE_USERNAME }} # 将用户名传递给 checkin.js
+    - name: Run check-in and push notification script
+      id: checkin_and_notify_step # Renamed ID for clarity
+      env:
+        NATPIERCE_USERNAME: ${{ secrets.NATPIERCE_USERNAME }} # Pass username to checkin.js
         NATPIERCE_PASSWORD: ${{ secrets.NATPIERCE_PASSWORD }} # Pass password to checkin.js
         token: ${{ secrets.PUSHPLUS_TOKEN }} # From GitHub Secrets for PushPlus token
       run: |

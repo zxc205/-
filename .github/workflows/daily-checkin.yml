@@ -4,7 +4,7 @@ name: Daily NatPierce Check-in
 on:
   workflow_dispatch: # 允许手动触发
   schedule:
-    - cron: '0 0 * * *' # 每天UTC时间02:10运行 (对应UTC+8的10:10)
+    - cron: '0 0 * * *' # 每天UTC时间02:10运行 (对应UTC+8的8:00)
 
 jobs:
   check-in:
@@ -133,30 +133,30 @@ jobs:
         # 如果签到失败，发送失败通知
         FAILURE_MESSAGE="❌ 签到任务执行失败！时间: $(date '+%Y-%m-%d %H:%M:%S')"
         python -c "
-import requests
-import os
-import sys
+        import requests
+        import os
+        import sys
 
-token = os.environ.get('PUSHPLUS_TOKEN')
-if token:
-    try:
-        response = requests.post(
-            'https://www.pushplus.plus/send',
-            json={
-                'token': token,
-                'title': '❌ NatPierce 签到失败',
-                'content': '$FAILURE_MESSAGE',
-                'template': 'json'
-            },
-            timeout=10
-        )
-        if response.status_code == 200:
-            print('✅ 失败通知已发送')
-        else:
-            print(f'⚠️ 发送失败通知出错: {response.status_code}')
-    except Exception as e:
-        print(f'⚠️ 发送失败通知异常: {e}')
-"
+        token = os.environ.get('PUSHPLUS_TOKEN')
+        if token:
+            try:
+                response = requests.post(
+                    'https://www.pushplus.plus/send',
+                    json={
+                        'token': token,
+                        'title': '❌ NatPierce 签到失败',
+                        'content': '$FAILURE_MESSAGE',
+                        'template': 'json'
+                    },
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    print('✅ 失败通知已发送')
+                else:
+                    print(f'⚠️ 发送失败通知出错: {response.status_code}')
+            except Exception as e:
+                print(f'⚠️ 发送失败通知异常: {e}')
+        "
 
     # 9. 清理工作（可选）
     - name: Cleanup

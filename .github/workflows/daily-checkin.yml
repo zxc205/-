@@ -4,56 +4,165 @@ name: Daily NatPierce Check-in
 on:
   workflow_dispatch: # 允许手动触发
   schedule:
-    - cron: '10 2 * * *' # 每天UTC时间02:10运行 (对应UTC+8的10:10，确保在可签到时间后)
+    - cron: '0 0 * * *' # 每天UTC时间02:10运行 (对应UTC+8的10:10)
 
 jobs:
   check-in:
-    runs-on: ubuntu-latest # 使用最新的Ubuntu环境
+    runs-on: ubuntu-latest
+    
+    # 设置超时时间，防止任务卡死
+    timeout-minutes: 10
 
     steps:
+    # 1. 检出代码
     - name: Checkout code
-      uses: actions/checkout@v3 # 检出你的仓库代码
+      uses: actions/checkout@v4
 
+    # 2. 设置 Node.js
     - name: Set up Node.js
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
-        node-version: '18' # 或者你希望的Node.js版本
+        node-version: '22' # 使用 Node.js 22 LTS（最新LTS版本）
+        cache: 'npm' # 自动缓存 npm 依赖
 
+    # 3. 检查并安装 Node.js 依赖（使用 package.json）
     - name: Install Node.js dependencies
-      run: npm install puppeteer # 安装puppeteer库
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.x' # Use the latest Python 3.x version
-
-    - name: Install Python dependencies
-      run: pip install requests opencv-python numpy Pillow
-
-    - name: Run check-in and push notification script
-      id: checkin_and_notify_step # Renamed ID for clarity
-      env:
-        NATPIERCE_USERNAME: ${{ secrets.NATPIERCE_USERNAME }} # Pass username to checkin.js
-        NATPIERCE_PASSWORD: ${{ secrets.NATPIERCE_PASSWORD }} # Pass password to checkin.js
-        token: ${{ secrets.PUSHPLUS_TOKEN }} # From GitHub Secrets for PushPlus token
       run: |
-        # Run checkin.js and capture its output
-        CHECKIN_OUTPUT=$(node checkin.js)
+        # 检查是否存在 package.json，如果不存在则创建
+        if [ ! -f package.json ]; then
+          echo '{
+            "name": "checkin-bot",
+            "version": "1.0.0",
+            "dependencies": {
+              "puppeteer": "^22.0.0"
+            }
+          }' > package.json
+        fi
+        npm ci || npm install # 优先使用 npm ci（更快更可靠），失败则回退到 npm install
+
+    # 4. 设置 Python
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11' # 指定具体版本，提高可重现性
+        cache: 'pip' # 自动缓存 pip 依赖
+
+    # 5. 安装 Python 依赖
+    - name: Install Python dependencies
+      run: |
+        # 检查是否存在 requirements.txt，如果不存在则创建
+        if [ ! -f requirements.txt ]; then
+          echo 'requests==2.31.0
+        opencv-python==4.9.0.80
+        numpy==1.26.3
+        Pillow==10.2.0' > requirements.txt
+        fi
+        pip install -r requirements.txt
+
+    # 6. 运行签到和通知脚本
+    - name: Run check-in and push notification
+      id: checkin
+      env:
+        NATPIERCE_USERNAME: ${{ secrets.NATPIERCE_USERNAME }}
+        NATPIERCE_PASSWORD: ${{ secrets.NATPIERCE_PASSWORD }}
+        PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }} # 重命名环境变量更清晰
+        # 可选：添加其他环境变量
+        CHECKIN_RETRY_COUNT: 3 # 重试次数
+        CHECKIN_TIMEOUT: 30000 # 超时时间（毫秒）
+      run: |
+        # 检查必要的 secrets 是否存在
+        if [ -z "$NATPIERCE_USERNAME" ] || [ -z "$NATPIERCE_PASSWORD" ]; then
+          echo "❌ 错误: 缺少 NATPIERCE_USERNAME 或 NATPIERCE_PASSWORD 环境变量"
+          exit 1
+        fi
+
+        # 运行签到脚本并捕获输出
+        echo "🔄 开始执行签到脚本..."
+        CHECKIN_OUTPUT=$(node checkin.js 2>&1) || {
+          echo "❌ 签到脚本执行失败"
+          echo "$CHECKIN_OUTPUT"
+          exit 1
+        }
+
+        # 提取签到结果
         CHECKIN_RESULT=$(echo "$CHECKIN_OUTPUT" | awk -F'CHECKIN_RESULT: ' '/CHECKIN_RESULT:/ {print $2}')
+        
+        # 如果没有提取到结果，使用默认值
+        if [ -z "$CHECKIN_RESULT" ]; then
+          CHECKIN_RESULT="签到结果未识别"
+        fi
 
-        # Print the full output of checkin.js for debugging
-        echo "Full checkin.js output:"
+        # 输出完整日志用于调试
+        echo "📋 签到脚本完整输出:"
+        echo "--- 开始 ---"
         echo "$CHECKIN_OUTPUT"
+        echo "--- 结束 ---"
+        echo "✅ 提取的签到结果: $CHECKIN_RESULT"
 
-        # Print the extracted result
-        echo "Extracted CHECKIN_RESULT: $CHECKIN_RESULT"
+        # 设置输出变量供后续步骤使用
+        echo "checkin_result=$CHECKIN_RESULT" >> $GITHUB_OUTPUT
 
-        # Run push_notification.py with the extracted result
-        python push_notification.py "$CHECKIN_RESULT"
+        # 运行通知脚本
+        if [ -n "$PUSHPLUS_TOKEN" ]; then
+          echo "📤 发送推送通知..."
+          python push_notification.py "$CHECKIN_RESULT" || {
+            echo "⚠️ 推送通知发送失败，但不影响签到流程"
+          }
+        else
+          echo "ℹ️ 未设置 PUSHPLUS_TOKEN，跳过推送通知"
+        fi
 
+    # 7. 上传调试信息（仅在失败时）
     - name: Upload debug artifacts
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: debug-artifacts
-        path: debug/
+        name: debug-artifacts-${{ github.run_id }}
+        path: |
+          debug/
+          *.log
+          *.txt
+        retention-days: 7 # 保留7天
+
+    # 8. 发送失败通知（可选）
+    - name: Send failure notification
+      if: failure() && env.PUSHPLUS_TOKEN != ''
+      env:
+        PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+      run: |
+        # 如果签到失败，发送失败通知
+        FAILURE_MESSAGE="❌ 签到任务执行失败！时间: $(date '+%Y-%m-%d %H:%M:%S')"
+        python -c "
+        import requests
+        import os
+        import sys
+
+        token = os.environ.get('PUSHPLUS_TOKEN')
+        if token:
+            try:
+                response = requests.post(
+                    'https://www.pushplus.plus/send',
+                    json={
+                        'token': token,
+                        'title': '❌ NatPierce 签到失败',
+                        'content': '$FAILURE_MESSAGE',
+                        'template': 'json'
+                    },
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    print('✅ 失败通知已发送')
+                else:
+                    print(f'⚠️ 发送失败通知出错: {response.status_code}')
+            except Exception as e:
+                print(f'⚠️ 发送失败通知异常: {e}')
+        "
+
+    # 9. 清理工作（可选）
+    - name: Cleanup
+      if: always()
+      run: |
+        # 清理临时文件和截图，释放空间
+        rm -rf debug/*.png 2>/dev/null || true
+        rm -rf /tmp/puppeteer_* 2>/dev/null || true
+        echo "🧹 清理完成"

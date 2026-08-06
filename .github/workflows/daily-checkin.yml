@@ -2,52 +2,33 @@
 name: Daily NatPierce Check-in
 
 on:
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *' # 每天UTC时间02:10运行 (对应UTC+8的8:00)
+    - cron: '0 0 * * *'
 
 jobs:
   check-in:
     runs-on: ubuntu-latest
-    
-    # 设置超时时间，防止任务卡死
     timeout-minutes: 10
 
     steps:
-    # 1. 检出代码
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # 2. 设置 Node.js
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '22' # 使用 Node.js 22 LTS（最新LTS版本）
-        cache: 'npm' # 自动缓存 npm 依赖
+        node-version: '22'
+        cache: 'npm'  # 现在可以正常使用了
 
-    # 3. 检查并安装 Node.js 依赖（使用 package.json）
     - name: Install Node.js dependencies
-      run: |
-        # 检查是否存在 package.json，如果不存在则创建
-        if [ ! -f package.json ]; then
-          echo '{
-            "name": "checkin-bot",
-            "version": "1.0.0",
-            "dependencies": {
-              "puppeteer": "^22.0.0"
-            }
-          }' > package.json
-        fi
-        npm ci || npm install # 优先使用 npm ci（更快更可靠），失败则回退到 npm install
+      run: npm ci  # 使用 npm ci，更快更可靠
 
-    # 4. 设置 Python
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11' # 指定具体版本，提高可重现性
-        cache: 'pip' # 自动缓存 pip 依赖
+        python-version: '3.11'
 
-    # 5. 安装 Python 依赖
     - name: Install Python dependencies
       run: |
         # 检查是否存在 requirements.txt，如果不存在则创建
@@ -59,16 +40,12 @@ jobs:
         fi
         pip install -r requirements.txt
 
-    # 6. 运行签到和通知脚本
     - name: Run check-in and push notification
       id: checkin
       env:
         NATPIERCE_USERNAME: ${{ secrets.NATPIERCE_USERNAME }}
         NATPIERCE_PASSWORD: ${{ secrets.NATPIERCE_PASSWORD }}
-        PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }} # 重命名环境变量更清晰
-        # 可选：添加其他环境变量
-        CHECKIN_RETRY_COUNT: 3 # 重试次数
-        CHECKIN_TIMEOUT: 30000 # 超时时间（毫秒）
+        PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
       run: |
         # 检查必要的 secrets 是否存在
         if [ -z "$NATPIERCE_USERNAME" ] || [ -z "$NATPIERCE_PASSWORD" ]; then
@@ -87,22 +64,16 @@ jobs:
         # 提取签到结果
         CHECKIN_RESULT=$(echo "$CHECKIN_OUTPUT" | awk -F'CHECKIN_RESULT: ' '/CHECKIN_RESULT:/ {print $2}')
         
-        # 如果没有提取到结果，使用默认值
         if [ -z "$CHECKIN_RESULT" ]; then
           CHECKIN_RESULT="签到结果未识别"
         fi
 
-        # 输出完整日志用于调试
         echo "📋 签到脚本完整输出:"
-        echo "--- 开始 ---"
         echo "$CHECKIN_OUTPUT"
-        echo "--- 结束 ---"
         echo "✅ 提取的签到结果: $CHECKIN_RESULT"
 
-        # 设置输出变量供后续步骤使用
         echo "checkin_result=$CHECKIN_RESULT" >> $GITHUB_OUTPUT
 
-        # 运行通知脚本
         if [ -n "$PUSHPLUS_TOKEN" ]; then
           echo "📤 发送推送通知..."
           python push_notification.py "$CHECKIN_RESULT" || {
@@ -112,7 +83,6 @@ jobs:
           echo "ℹ️ 未设置 PUSHPLUS_TOKEN，跳过推送通知"
         fi
 
-    # 7. 上传调试信息（仅在失败时）
     - name: Upload debug artifacts
       if: failure()
       uses: actions/upload-artifact@v4
@@ -122,47 +92,11 @@ jobs:
           debug/
           *.log
           *.txt
-        retention-days: 7 # 保留7天
+        retention-days: 7
 
-    # 8. 发送失败通知（可选）
-    - name: Send failure notification
-      if: failure() && env.PUSHPLUS_TOKEN != ''
-      env:
-        PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-      run: |
-        # 如果签到失败，发送失败通知
-        FAILURE_MESSAGE="❌ 签到任务执行失败！时间: $(date '+%Y-%m-%d %H:%M:%S')"
-        python -c "
-        import requests
-        import os
-        import sys
-
-        token = os.environ.get('PUSHPLUS_TOKEN')
-        if token:
-            try:
-                response = requests.post(
-                    'https://www.pushplus.plus/send',
-                    json={
-                        'token': token,
-                        'title': '❌ NatPierce 签到失败',
-                        'content': '$FAILURE_MESSAGE',
-                        'template': 'json'
-                    },
-                    timeout=10
-                )
-                if response.status_code == 200:
-                    print('✅ 失败通知已发送')
-                else:
-                    print(f'⚠️ 发送失败通知出错: {response.status_code}')
-            except Exception as e:
-                print(f'⚠️ 发送失败通知异常: {e}')
-        "
-
-    # 9. 清理工作（可选）
     - name: Cleanup
       if: always()
       run: |
-        # 清理临时文件和截图，释放空间
         rm -rf debug/*.png 2>/dev/null || true
         rm -rf /tmp/puppeteer_* 2>/dev/null || true
         echo "🧹 清理完成"

@@ -2,101 +2,58 @@
 name: Daily NatPierce Check-in
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 允许手动触发
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 0 * * *' # 每天UTC时间02:10运行 (对应UTC+8的10:10，确保在可签到时间后)
 
 jobs:
   check-in:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-latest # 使用最新的Ubuntu环境
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v4 # ✅ 从 v3 升级到 v4
 
     - name: Set up Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v4 # ✅ 从 v3 升级到 v4
       with:
-        node-version: '22'
-        cache: 'npm'  # 现在可以正常使用了
+        node-version: '20' # ✅ 建议使用 Node.js 20 LTS（或更高版本如 '22'）
 
     - name: Install Node.js dependencies
-      run: npm ci  # 使用 npm ci，更快更可靠
+      run: npm install puppeteer # 安装puppeteer库
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v5 # ✅ 从 v4 升级到 v5
       with:
-        python-version: '3.11'
+        python-version: '3.x' # Use the latest Python 3.x version
 
     - name: Install Python dependencies
-      run: |
-        # 检查是否存在 requirements.txt，如果不存在则创建
-        if [ ! -f requirements.txt ]; then
-          echo 'requests==2.31.0
-        opencv-python==4.9.0.80
-        numpy==1.26.3
-        Pillow==10.2.0' > requirements.txt
-        fi
-        pip install -r requirements.txt
+      run: pip install requests opencv-python numpy Pillow
 
-    - name: Run check-in and push notification
-      id: checkin
+    - name: Run check-in and push notification script
+      id: checkin_and_notify_step
       env:
         NATPIERCE_USERNAME: ${{ secrets.NATPIERCE_USERNAME }}
         NATPIERCE_PASSWORD: ${{ secrets.NATPIERCE_PASSWORD }}
-        PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+        token: ${{ secrets.PUSHPLUS_TOKEN }}
       run: |
-        # 检查必要的 secrets 是否存在
-        if [ -z "$NATPIERCE_USERNAME" ] || [ -z "$NATPIERCE_PASSWORD" ]; then
-          echo "❌ 错误: 缺少 NATPIERCE_USERNAME 或 NATPIERCE_PASSWORD 环境变量"
-          exit 1
-        fi
-
-        # 运行签到脚本并捕获输出
-        echo "🔄 开始执行签到脚本..."
-        CHECKIN_OUTPUT=$(node checkin.js 2>&1) || {
-          echo "❌ 签到脚本执行失败"
-          echo "$CHECKIN_OUTPUT"
-          exit 1
-        }
-
-        # 提取签到结果
+        # Run checkin.js and capture its output
+        CHECKIN_OUTPUT=$(node checkin.js)
         CHECKIN_RESULT=$(echo "$CHECKIN_OUTPUT" | awk -F'CHECKIN_RESULT: ' '/CHECKIN_RESULT:/ {print $2}')
-        
-        if [ -z "$CHECKIN_RESULT" ]; then
-          CHECKIN_RESULT="签到结果未识别"
-        fi
 
-        echo "📋 签到脚本完整输出:"
+        # Print the full output of checkin.js for debugging
+        echo "Full checkin.js output:"
         echo "$CHECKIN_OUTPUT"
-        echo "✅ 提取的签到结果: $CHECKIN_RESULT"
 
-        echo "checkin_result=$CHECKIN_RESULT" >> $GITHUB_OUTPUT
+        # Print the extracted result
+        echo "Extracted CHECKIN_RESULT: $CHECKIN_RESULT"
 
-        if [ -n "$PUSHPLUS_TOKEN" ]; then
-          echo "📤 发送推送通知..."
-          python push_notification.py "$CHECKIN_RESULT" || {
-            echo "⚠️ 推送通知发送失败，但不影响签到流程"
-          }
-        else
-          echo "ℹ️ 未设置 PUSHPLUS_TOKEN，跳过推送通知"
-        fi
+        # Run push_notification.py with the extracted result
+        python push_notification.py "$CHECKIN_RESULT"
 
     - name: Upload debug artifacts
       if: failure()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4 # 这个已经是 v4，无需更改
       with:
-        name: debug-artifacts-${{ github.run_id }}
-        path: |
-          debug/
-          *.log
-          *.txt
-        retention-days: 7
-
-    - name: Cleanup
-      if: always()
-      run: |
-        rm -rf debug/*.png 2>/dev/null || true
-        rm -rf /tmp/puppeteer_* 2>/dev/null || true
-        echo "🧹 清理完成"
+        name: debug-artifacts
+        path: debug/
